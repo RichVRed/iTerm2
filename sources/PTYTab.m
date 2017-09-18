@@ -1007,9 +1007,48 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
                       verticalDir:(BOOL)verticalDir
                             after:(BOOL)after {
     NSArray<PTYSession *> *sessions = [self sessionsAdjacentToSession:session verticalDir:verticalDir after:after];
-    return [sessions maxWithComparator:^NSComparisonResult(PTYSession *a, PTYSession *b) {
+    PTYSession *result = [sessions maxWithComparator:^NSComparisonResult(PTYSession *a, PTYSession *b) {
         return [a.activityCounter compare:b.activityCounter];
     }];
+    if (result == nil) {
+        // Find all sessions on the same row/column
+        NSArray<PTYSession *> *candidates = [self sessionsInProjectionOfSession:session verticalDirection:verticalDir after:!after];
+        
+        CGFloat (^value)(PTYSession *session) = ^CGFloat(PTYSession *session) {
+            NSRect rect = [root_ convertRect:session.view.frame fromView:session.view.superview];
+            if (verticalDir) {
+                SwapSize(&rect.size);
+                SwapPoint(&rect.origin);
+            }
+            const BOOL before = !after;
+            // Note the use of negation to change sorting order
+            const CGFloat right = before ? -NSMaxX(rect) : NSMinX(rect);
+            return right;
+        };
+        
+        // Sort them from farthest to nearest
+        candidates = [candidates sortedArrayUsingComparator:^NSComparisonResult(PTYSession *a, PTYSession *b) {
+            if (a == b) {
+                return NSOrderedSame;
+            }
+            return [@(value(a)) compare:@(value(b))];
+        }];
+
+        if (candidates.count > 0) {
+            CGFloat firstRight = value(candidates.firstObject);
+            
+            // Select from only those with the best value for tiebreaking
+            candidates = [candidates filteredArrayUsingBlock:^BOOL(PTYSession *session) {
+                return value(session) == firstRight;
+            }];
+            
+            // If it's a tie pick the most recently used
+            result = [candidates maxWithComparator:^NSComparisonResult(PTYSession *a, PTYSession *b) {
+                return [a.activityCounter compare:b.activityCounter];
+            }];
+        }
+    }
+    return result;
 }
 
 - (PTYSession*)sessionLeftOf:(PTYSession*)session {
